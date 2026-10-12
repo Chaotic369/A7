@@ -542,12 +542,12 @@
         c = 0.5 + 0.5 * cos(6.28318 * (vec3(1.0, 1.0, 1.0) * hue + vec3(0.0, 0.33, 0.67)));
         c = mix(c, vec3(1.2), smoothstep(0.7, 1.0, temp));
       }
-      c *= pow(doppler, 3.2);[span_13](start_span)[span_13](end_span)
+      c *= pow(doppler, 3.2);
       return c;
     }
 
     void main() {
-      vec2 uv = (gl_FragCoord.xy - 0.5 * u_resolution) / u_resolution.y;[span_14](start_span)[span_14](end_span)
+      vec2 uv = (gl_FragCoord.xy - 0.5 * u_resolution) / u_resolution.y;
 
       // Camera Matrix setup[span_15](start_span)[span_15](end_span)
       vec3 ro = u_cam_pos;
@@ -600,7 +600,7 @@
         rayPos += rayDir * h;
         totalDist += h;
 
-        h = max(0.05, r * 0.045);[span_21](start_span)[span_21](end_span)
+        h = max(0.05, r * 0.045);
 
         // Transform ray segment into tilted accretion disk frame[span_22](start_span)[span_22](end_span)
         vec3 p0 = tiltMat * prevPos;
@@ -686,7 +686,7 @@
       if (hitHorizon) {
         finalColor = accumColor; // Pure black singularity horizon inside photon ring[span_27](start_span)[span_27](end_span)
       } else {
-        vec3 bgStars = backgroundStars(rayDir, u_vibration * 1.2 + u_pulse * 2.0);[span_28](start_span)[span_28](end_span)
+        vec3 bgStars = backgroundStars(rayDir, u_vibration * 1.2 + u_pulse * 2.0);
         finalColor = accumColor + (1.0 - alpha) * bgStars;
       }
 
@@ -720,7 +720,7 @@
 
   // Shader Uniforms[span_33](start_span)[span_33](end_span)
   const uniforms = {
-    u_resolution: { value: new THREE.Vector2(window.innerWidth, window.innerHeight) },
+    u_resolution: { value: new THREE.Vector2(window.innerWidth * renderer.getPixelRatio(), window.innerHeight * renderer.getPixelRatio()) },
     u_time: { value: 0.0 },
     u_cam_pos: { value: new THREE.Vector3(0.0, 1.2, -6.8) },
     u_cam_target: { value: new THREE.Vector3(0.0, 0.0, 0.0) },
@@ -791,7 +791,7 @@
 
   window.addEventListener('resize', () => {
     renderer.setSize(window.innerWidth, window.innerHeight);
-    uniforms.u_resolution.value.set(window.innerWidth, window.innerHeight);
+    uniforms.u_resolution.value.set(window.innerWidth * renderer.getPixelRatio(), window.innerHeight * renderer.getPixelRatio());
   });
 
 
