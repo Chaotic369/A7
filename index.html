@@ -261,7 +261,16 @@
       transition: opacity 0.1s;
   }
 
-  /* Responsive tweaks */
+  #particle-canvas {
+      position: absolute;
+      inset: 0;
+      width: 100%;
+      height: 100%;
+      z-index: 5;
+      pointer-events: none;
+    }
+
+    /* Responsive tweaks */
   @media (max-width: 768px) {
     .hud-header { top: 16px; left: 16px; }
     .hud-title { font-size: 15px; }
@@ -275,6 +284,7 @@
 
 <div id="canvas-container"></div>
 <div id="flash-overlay"></div>
+<canvas id="particle-canvas"></canvas>
 
 <!-- Initial Activation Overlay -->
 <div id="audio-gate">
@@ -457,6 +467,7 @@
     uniform float u_dark_factor;
     uniform float u_flash;
     uniform float u_warp_mult;
+        uniform float u_seed;
 
     #define PI 3.14159265359
     #define STEPS 64
@@ -690,7 +701,18 @@
         finalColor = accumColor + (1.0 - alpha) * bgStars;
       }
 
-      // APPLY SEQUENCE OVERLAYS (Darkness & Flash)
+      // SEED LIGHT: a single warped point of light that replaces the scene
+            if (u_seed > 0.0) {
+              float sr0 = length(uv);
+              float sAng = atan(uv.y, uv.x) + u_warp_mult * 0.25 * exp(-sr0 * 2.5) + u_time * 0.8;
+              float sRad = sr0 * (1.0 + 0.15 * sin(sAng * 5.0 + u_time * 9.0) * min(u_warp_mult / 10.0, 1.5));
+              float sCore = (0.004 * u_seed + 0.03 * u_seed * u_seed) / (sRad * sRad + 0.0008);
+              float sRays = pow(abs(sin(sAng * 7.0 + u_time * 2.0)), 24.0) * exp(-sRad * 5.0) * u_seed;
+              float sSwirl = (0.5 + 0.5 * sin(sAng * 6.0 - sRad * 40.0 + u_time * 14.0)) * exp(-sRad * 3.5) * u_seed * 0.6;
+              finalColor = vec3(1.0, 0.85, 0.6) * sCore + vec3(0.7, 0.8, 1.0) * sRays * 1.2 + vec3(1.0, 0.6, 0.3) * sSwirl;
+            }
+
+            // APPLY SEQUENCE OVERLAYS (Darkness & Flash)
       finalColor *= u_dark_factor; // Absolute darkness
       finalColor += vec3(1.0) * u_flash * 5.0; // Blinding flash (overdrives tonemapping)
 
@@ -731,7 +753,8 @@
     u_mix_galaxy: { value: 0.0 },
     u_dark_factor: { value: 1.0 },
     u_flash: { value: 0.0 },
-    u_warp_mult: { value: 1.0 }
+    u_warp_mult: { value: 1.0 },
+        u_seed: { value: 0.0 }
   };
 
   const material = new THREE.ShaderMaterial({
@@ -805,7 +828,98 @@
   const flashOverlay = document.getElementById('flash-overlay');
 
   function startBigBangSequence() {
-      if(sequenceActive) return;
+        if (sequenceActive) return;
+
+        if (!audioCtx) initAudio();
+        if (audioCtx.state === 'suspended') audioCtx.resume();
+        audioGate.classList.add('hidden');
+
+        flashOverlay.style.transition = 'none';
+        flashOverlay.style.opacity = '0';
+        sequenceActive = true;
+        const seqNow = clock.getElapsedTime();
+        seqStartTime = seqNow;
+
+        hudStatus.textContent = "CRITICAL COLLAPSE";
+        hudStatus.classList.add('critical-val');
+        hudStatus.style.color = '';
+
+        const now = audioCtx.currentTime;
+        const masterLevel = isMuted ? 0.0 : 0.7;
+
+        // Phase 1 (0 - 3.5s): space warps, everything is pulled into the hole
+        subGain.gain.setValueAtTime(subGain.gain.value, now);
+        subGain.gain.linearRampToValueAtTime(1.0, now + 3.5);
+        subOsc.frequency.setValueAtTime(subOsc.frequency.value, now);
+        subOsc.frequency.exponentialRampToValueAtTime(120, now + 3.5);
+        filterNode.frequency.setValueAtTime(filterNode.frequency.value, now);
+        filterNode.frequency.exponentialRampToValueAtTime(1800, now + 3.5);
+
+        const riser = audioCtx.createOscillator();
+        const riserGain = audioCtx.createGain();
+        riser.type = 'sine';
+        riser.frequency.setValueAtTime(80, now);
+        riser.frequency.exponentialRampToValueAtTime(1400, now + 3.5);
+        riserGain.gain.setValueAtTime(0.0, now);
+        riserGain.gain.linearRampToValueAtTime(0.22, now + 3.4);
+        riserGain.gain.setValueAtTime(0.0, now + 3.5);
+        riser.connect(riserGain);
+        riserGain.connect(masterGain);
+        riser.start(now);
+        riser.stop(now + 3.6);
+
+        // Bang 1 (3.5s): sharp crack with the blinding flash
+        const crackOsc = audioCtx.createOscillator();
+        const crackGain = audioCtx.createGain();
+        crackOsc.type = 'sine';
+        crackOsc.frequency.setValueAtTime(240, now + 3.5);
+        crackOsc.frequency.exponentialRampToValueAtTime(30, now + 3.62);
+        crackGain.gain.setValueAtTime(0.0, now + 3.49);
+        crackGain.gain.setValueAtTime(1.2, now + 3.5);
+        crackGain.gain.exponentialRampToValueAtTime(0.001, now + 3.62);
+        crackOsc.connect(crackGain);
+        crackGain.connect(audioCtx.destination);
+        crackOsc.start(now + 3.5);
+        crackOsc.stop(now + 3.65);
+
+        const crackNoise = audioCtx.createBufferSource();
+        const crackNoiseGain = audioCtx.createGain();
+        crackNoise.buffer = noiseNode.buffer;
+        crackNoiseGain.gain.setValueAtTime(0.0, now + 3.49);
+        crackNoiseGain.gain.setValueAtTime(1.0, now + 3.5);
+        crackNoiseGain.gain.exponentialRampToValueAtTime(0.001, now + 3.62);
+        crackNoise.connect(crackNoiseGain);
+        crackNoiseGain.connect(audioCtx.destination);
+        crackNoise.start(now + 3.5);
+        crackNoise.stop(now + 3.65);
+
+        // Absolute silence (3.62 - 4.2s), then the light returns
+        masterGain.gain.setValueAtTime(masterLevel, now + 3.5);
+        masterGain.gain.setValueAtTime(0.0, now + 3.62);
+        masterGain.gain.setValueAtTime(masterLevel, now + 4.2);
+
+        const shimmer = audioCtx.createOscillator();
+        const shimmerGain = audioCtx.createGain();
+        shimmer.type = 'triangle';
+        shimmer.frequency.setValueAtTime(300, now + 4.2);
+        shimmer.frequency.exponentialRampToValueAtTime(2400, now + 5.6);
+        shimmerGain.gain.setValueAtTime(0.0, now + 4.2);
+        shimmerGain.gain.linearRampToValueAtTime(0.2, now + 5.5);
+        shimmerGain.gain.setValueAtTime(0.0, now + 5.6);
+        shimmer.connect(shimmerGain);
+        shimmerGain.connect(masterGain);
+        shimmer.start(now + 4.2);
+        shimmer.stop(now + 5.7);
+
+        // Second bang audio lands at 5.6s (its internal boom is at +2.5s)
+        setTimeout(playSecondBangAudio, 3100);
+        setTimeout(() => {
+            hudStatus.textContent = "RE-IGNITION";
+        }, 4200);
+    }
+
+    function playSecondBangAudio() {
+      if (!audioCtx || !sequenceActive) return;
       
       // Ensure audio is initialized
       if (!audioCtx) initAudio();
@@ -813,7 +927,7 @@
       audioGate.classList.add('hidden');
 
       sequenceActive = true;
-      seqStartTime = clock.getElapsedTime();
+      
       
       hudStatus.textContent = "CRITICAL COLLAPSE";
       hudStatus.classList.add('critical-val');
@@ -890,7 +1004,7 @@
           hudStatus.textContent = "EXPANDING";
           hudStatus.classList.remove('critical-val');
           hudStatus.style.color = '#55ffaa';
-      }, 5000);
+      }, 2500);
   }
 
   // --- UI Interactivity ---[span_38](start_span)[span_38](end_span)
@@ -991,7 +1105,78 @@
     waveCtx.shadowBlur = 0;
   }
 
-  // --- Animation & Render Loop ---[span_42](start_span)[span_42](end_span)
+  // --- Particle Infall Overlay ---
+    const particleCanvas = document.getElementById('particle-canvas');
+    const particleCtx = particleCanvas.getContext('2d');
+    const particles = [];
+    const MAX_PARTICLES = 420;
+    let particleStrength = 0.0;
+    let lastParticleMs = performance.now();
+
+    function resizeParticleCanvas() {
+      particleCanvas.width = window.innerWidth;
+      particleCanvas.height = window.innerHeight;
+    }
+    resizeParticleCanvas();
+    window.addEventListener('resize', resizeParticleCanvas);
+
+    function spawnParticle() {
+      const maxR = Math.hypot(particleCanvas.width, particleCanvas.height) * 0.55;
+      particles.push({
+        angle: Math.random() * Math.PI * 2,
+        radius: maxR * (0.35 + Math.random() * 0.65),
+        speed: 0.4 + Math.random() * 0.9,
+        spin: 0.8 + Math.random() * 1.4,
+        size: 0.8 + Math.random() * 1.8,
+        hue: 20 + Math.random() * 30
+      });
+    }
+
+    function updateParticles() {
+      const nowMs = performance.now();
+      const dt = Math.min(0.05, (nowMs - lastParticleMs) / 1000);
+      lastParticleMs = nowMs;
+      const w = particleCanvas.width;
+      const h = particleCanvas.height;
+      particleCtx.clearRect(0, 0, w, h);
+      if (particleStrength <= 0.0) {
+        particles.length = 0;
+        return;
+      }
+      const cx = w * 0.5;
+      const cy = h * 0.5;
+      const horizon = h * 0.2 * (6.8 / camRadius);
+      const spawnCount = Math.ceil(particleStrength * 10);
+      for (let s = 0; s < spawnCount && particles.length < MAX_PARTICLES; s++) spawnParticle();
+
+      particleCtx.globalCompositeOperation = 'lighter';
+      particleCtx.lineCap = 'round';
+      for (let i = particles.length - 1; i >= 0; i--) {
+        const p = particles[i];
+        const dr = (50 + 420 * particleStrength) * p.speed * (1.0 + 140.0 / Math.max(p.radius, 30.0)) * dt;
+        const da = p.spin * (0.6 + 260.0 / Math.max(p.radius, 40.0)) * dt;
+        const tailX = cx + Math.cos(p.angle - da * 6.0) * (p.radius + dr * 6.0);
+        const tailY = cy + Math.sin(p.angle - da * 6.0) * (p.radius + dr * 6.0);
+        p.radius -= dr;
+        p.angle += da;
+        if (p.radius <= horizon * 0.85) {
+          particles.splice(i, 1);
+          continue;
+        }
+        const x = cx + Math.cos(p.angle) * p.radius;
+        const y = cy + Math.sin(p.angle) * p.radius;
+        const fade = Math.max(0.0, Math.min(1.0, (p.radius - horizon * 0.85) / (horizon * 0.6)));
+        particleCtx.strokeStyle = 'hsla(' + p.hue + ', 100%, ' + (60 + 30 * (1.0 - fade)) + '%, ' + (0.85 * fade) + ')';
+        particleCtx.lineWidth = p.size * (0.7 + particleStrength);
+        particleCtx.beginPath();
+        particleCtx.moveTo(tailX, tailY);
+        particleCtx.lineTo(x, y);
+        particleCtx.stroke();
+      }
+      particleCtx.globalCompositeOperation = 'source-over';
+    }
+
+    // --- Animation & Render Loop ---[span_42](start_span)[span_42](end_span)
   const clock = new THREE.Clock();
 
   function animate() {
@@ -1058,7 +1243,60 @@
         }
     }
 
-    uniforms.u_vibration.value = currentVibration;
+    if (sequenceActive) {
+          const st = elapsedTime - seqStartTime;
+          let seqDark = 1.0;
+          let seqFlash = 0.0;
+          let seqOverlay = 0.0;
+          let seqSeed = 0.0;
+          let seqGalaxy = 0.0;
+          particleStrength = 0.0;
+
+          if (st < 3.5) {
+            // Space wraps, particles spiral into the hole
+            const k = st / 3.5;
+            particleStrength = Math.min(1.0, 0.15 + k);
+            currentWarpMult = 1.0 + k * k * 19.0;
+            currentVibration = Math.max(currentVibration, k);
+          } else if (st < 3.62) {
+            // Bang 1: blinding flash
+            seqFlash = 1.0;
+            seqOverlay = 1.0;
+            currentWarpMult = 20.0;
+            currentVibration = 2.0;
+          } else if (st < 4.2) {
+            // Absolute black
+            seqDark = 0.0;
+            currentWarpMult = 20.0;
+          } else if (st < 5.6) {
+            // A light appears and space warps inside it
+            const k = (st - 4.2) / 1.4;
+            seqSeed = 0.02 + 0.98 * k * k;
+            currentWarpMult = 6.0 + k * 16.0;
+            currentVibration = Math.max(currentVibration, 0.4 + k * 1.6);
+          } else if (st < 5.75) {
+            // Bang 2: second flash
+            seqFlash = 1.0;
+            seqOverlay = 1.0;
+            currentWarpMult = 22.0;
+            currentVibration = 2.0;
+          } else {
+            // Milky Way forms
+            const ft = st - 5.75;
+            seqFlash = Math.max(0.0, 1.0 - ft / 2.5);
+            seqOverlay = Math.max(0.0, 1.0 - ft * 1.2);
+            currentWarpMult = Math.max(4.0, 22.0 - ft * 6.0);
+            seqGalaxy = Math.min(1.0, ft / 8.0);
+          }
+
+          uniforms.u_dark_factor.value = seqDark;
+          uniforms.u_flash.value = seqFlash;
+          uniforms.u_seed.value = seqSeed;
+          uniforms.u_mix_galaxy.value = seqGalaxy;
+          flashOverlay.style.opacity = seqOverlay.toString();
+        }
+
+        uniforms.u_vibration.value = currentVibration;
     uniforms.u_pulse.value = warpPulseIntensity;
     uniforms.u_warp_mult.value = currentWarpMult;
 
@@ -1073,7 +1311,8 @@
     const dynFreq = (43.2 + currentVibration * 14.5 + warpPulseIntensity * 80.0 + (sequenceActive ? 300 : 0)).toFixed(1);
     valFreq.textContent = dynFreq + ' Hz';
 
-    drawMiniWaveform();
+    updateParticles();
+        drawMiniWaveform();
     renderer.render(scene, camera);
   }
 
